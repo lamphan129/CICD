@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Build & Test Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        .build-success { background-color: #d4edda; }
+        .build-failed { background-color: #f8d7da; }
+        .build-warning { background-color: #fff3cd; }
+        .stat-card { 
+            border-left: 4px solid #007bff;
+            transition: transform 0.2s;
+        }
+        .stat-card:hover { transform: translateY(-5px); }
+        .failure-item { 
+            border-left: 3px solid #dc3545; 
+            margin-bottom: 10px;
+            padding: 10px;
+            background-color: #fff5f5;
+        }
+        #buildChart { max-height: 300px; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h1">
+                <i class="bi bi-gear-fill"></i> CI/CD Build Dashboard
+            </span>
+            <span class="text-light" id="lastUpdate"></span>
+        </div>
+    </nav>
+
+
+    <div class="container-fluid mt-4">
+        <!-- Statistics Cards -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card stat-card">
+                    <div class="card-body">
+                        <h6 class="card-subtitle mb-2 text-muted">Success Rate (7 days)</h6>
+                        <h2 class="card-title" id="successRate">--%</h2>
+                        <i class="bi bi-check-circle text-success"></i>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stat-card">
+                    <div class="card-body">
+                        <h6 class="card-subtitle mb-2 text-muted">Total Builds</h6>
+                        <h2 class="card-title" id="totalBuilds">--</h2>
+                        <i class="bi bi-server"></i>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stat-card">
+                    <div class="card-body">
+                        <h6 class="card-subtitle mb-2 text-muted">Avg Duration</h6>
+                        <h2 class="card-title" id="avgDuration">--s</h2>
+                        <i class="bi bi-clock"></i>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stat-card">
+                    <div class="card-body">
+                        <h6 class="card-subtitle mb-2 text-muted">Total Failures</h6>
+                        <h2 class="card-title text-danger" id="totalFailures">--</h2>
+                        <i class="bi bi-x-circle text-danger"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- Build Trend Chart -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Build Trend (Last 30 Days)</h5>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="buildChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- Recent Builds and Failures -->
+        <div class="row">
+            <div class="col-md-7">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Recent Builds</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover" id="buildsTable">
+                                <thead>
+                                    <tr>
+                                        <th>Build ID</th>
+                                        <th>Date/Time</th>
+                                        <th>Tests</th>
+                                        <th>Duration</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+
+            <div class="col-md-5">
+                <div class="card">
+                    <div class="card-header">
+                        <h5>Most Failing Tests</h5>
+                    </div>
+                    <div class="card-body" id="failingTests">
+                        <p class="text-muted">Loading...</p>
+                    </div>
+                </div>
+
+
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h5>Latest Failures</h5>
+                    </div>
+                    <div class="card-body" id="latestFailures">
+                        <p class="text-muted">No failures in latest build</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Build Details Modal -->
+    <div class="modal fade" id="buildModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Build Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="modalBody">
+                    Loading...
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let buildChart;
+
+
+        // Fetch and display statistics
+        async function loadStats() {
+            const response = await fetch('/api/stats');
+            const data = await response.json();
+            
+            const successRate = data.stats.total_builds > 0 
+                ? ((data.stats.successful_builds / data.stats.total_builds) * 100).toFixed(1)
+                : 0;
+            
+            document.getElementById('successRate').textContent = successRate + '%';
+            document.getElementById('totalBuilds').textContent = data.stats.total_builds;
+            document.getElementById('avgDuration').textContent = 
+                data.stats.avg_duration ? data.stats.avg_duration.toFixed(2) + 's' : 'N/A';
+            document.getElementById('totalFailures').textContent = data.stats.total_failures || 0;
+
+
+            // Display most failing tests
+            const failingTestsDiv = document.getElementById('failingTests');
+            if (data.most_failing_tests.length > 0) {
+                failingTestsDiv.innerHTML = data.most_failing_tests.map(test => `
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="text-truncate" style="max-width: 70%;" title="${test.test_name}">
+                            ${test.test_name.split('::').pop()}
+                        </span>
+                        <span class="badge bg-danger">${test.failure_count}</span>
+                    </div>
+                `).join('');
+            } else {
+                failingTestsDiv.innerHTML = '<p class="text-success">No failing tests!</p>';
+            }
+        }
+
+
+        // Fetch and display builds
+        async function loadBuilds() {
+            const response = await fetch('/api/builds');
+            const builds = await response.json();
+            
+            const tbody = document.querySelector('#buildsTable tbody');
+            tbody.innerHTML = builds.map(build => {
+                const statusClass = build.failed > 0 || build.build_status === 'FAILED' 
+                    ? 'build-failed' : 'build-success';
+                const statusIcon = build.failed > 0 || build.build_status === 'FAILED'
+                    ? '<i class="bi bi-x-circle-fill text-danger"></i>'
+                    : '<i class="bi bi-check-circle-fill text-success"></i>';
+                
+                const date = new Date(build.timestamp);
+                
+                return `
+                    <tr class="${statusClass}">
+                        <td>#${build.id}</td>
+                        <td>${date.toLocaleString()}</td>
+                        <td>
+                            <span class="badge bg-success">${build.passed}</span>
+                            <span class="badge bg-danger">${build.failed}</span>
+                            <span class="badge bg-secondary">${build.skipped}</span>
+                        </td>
+                        <td>${build.duration.toFixed(2)}s</td>
+                        <td>${statusIcon} ${build.build_status}</td>
+                        <td>
+                            <button class="btn btn-sm btn-primary" onclick="showBuildDetails(${build.id})">
+                                <i class="bi bi-eye"></i> Details
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+
+            // Update chart
+            updateChart(builds);
+
+
+            // Show latest failures
+            if (builds.length > 0) {
+                showLatestFailures(builds[0].id);
+            }
+
+
+            document.getElementById('lastUpdate').textContent = 
+                'Last updated: ' + new Date().toLocaleTimeString();
+        }
+
+
+        // Update trend chart
+        function updateChart(builds) {
+            const ctx = document.getElementById('buildChart').getContext('2d');
+            
+            const labels = builds.reverse().map(b => {
+                const date = new Date(b.timestamp);
+                return date.toLocaleDateString();
+            });
+            
+            const passedData = builds.map(b => b.passed);
+            const failedData = builds.map(b => b.failed);
+
+
+            if (buildChart) {
+                buildChart.destroy();
+            }
+
+
+            buildChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Passed Tests',
+                        data: passedData,
+                        borderColor: 'rgb(75, 192, 192)',
+                        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                        tension: 0.1
+                    }, {
+                        label: 'Failed Tests',
+                        data: failedData,
+                        borderColor: 'rgb(255, 99, 132)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        }
+                    }
+                }
+            });
+        }
+
+
+        // Show build details in modal
+        async function showBuildDetails(buildId) {
+            const response = await fetch(`/api/build/${buildId}`);
+            const data = await response.json();
+            
+            const modalBody = document.getElementById('modalBody');
+            modalBody.innerHTML = `
+                <h6>Build Summary</h6>
+                <ul>
+                    <li>Build ID: #${data.build.id}</li>
+                    <li>Timestamp: ${new Date(data.build.timestamp).toLocaleString()}</li>
+                    <li>Total Tests: ${data.build.total_tests}</li>
+                    <li>Passed: ${data.build.passed}</li>
+                    <li>Failed: ${data.build.failed}</li>
+                    <li>Duration: ${data.build.duration.toFixed(2)}s</li>
+                    <li>Build Status: ${data.build.build_status}</li>
+                </ul>
+                
+                ${data.failures.length > 0 ? `
+                    <h6 class="mt-3">Failed Tests</h6>
+                    ${data.failures.map(f => `
+                        <div class="failure-item">
+                            <strong>${f.test_name}</strong><br>
+                            <small class="text-muted">${f.file_path}:${f.line_number}</small>
+                            <pre class="mt-2 p-2 bg-light">${f.error_message}</pre>
+                        </div>
+                    `).join('')}
+                ` : '<p class="text-success">No failures!</p>'}
+            `;
+            
+            const modal = new bootstrap.Modal(document.getElementById('buildModal'));
+            modal.show();
+        }
+
+
+        // Show latest build failures
+        async function showLatestFailures(buildId) {
+            const response = await fetch(`/api/build/${buildId}`);
+            const data = await response.json();
+            
+            const failuresDiv = document.getElementById('latestFailures');
+            
+            if (data.failures.length > 0) {
+                failuresDiv.innerHTML = data.failures.slice(0, 5).map(f => `
+                    <div class="failure-item">
+                        <strong class="text-danger">${f.test_name.split('::').pop()}</strong><br>
+                        <small class="text-muted">${f.file_path}</small>
+                    </div>
+                `).join('');
+            } else {
+                failuresDiv.innerHTML = '<p class="text-success"><i class="bi bi-check-circle"></i> No failures in latest build!</p>';
+            }
+        }
+
+
+        // Load data on page load
+        loadStats();
+        loadBuilds();
+
+
+        // Auto-refresh every 5 minutes
+        setInterval(() => {
+            loadStats();
+            loadBuilds();
+        }, 300000);
+    </script>
+</body>
+</html>
