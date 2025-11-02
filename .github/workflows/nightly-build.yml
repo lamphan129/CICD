@@ -39,7 +39,7 @@ jobs:
         python setup.py build > build.log 2>&1
     
     - name: Upload Test Results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v5
       with:
         name: test-reports
         path: |
